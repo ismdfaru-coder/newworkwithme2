@@ -33,6 +33,7 @@ interface Message {
   taskId?: string
   steps?: TaskStep[]
   artifacts?: Artifact[]
+  sources?: Source[]
 }
 
 interface TaskStep {
@@ -48,6 +49,13 @@ interface Artifact {
   title: string
   content?: string
   url?: string
+}
+
+interface Source {
+  url: string
+  title: string
+  startIndex?: number
+  endIndex?: number
 }
 
 interface ManusResponse {
@@ -341,6 +349,58 @@ export default function DashboardPage() {
       const responseContent = extractContent(resultData)
       console.log("[v0] Extracted content:", responseContent.substring(0, 200))
       
+      // Extract sources/citations from annotations in the response
+      const extractSources = (data: ManusResponse): Source[] => {
+        const sources: Source[] = []
+        const seenUrls = new Set<string>()
+        
+        // Helper to extract annotations from content array
+        const extractAnnotationsFromContent = (content: unknown) => {
+          if (Array.isArray(content)) {
+            content.forEach((item) => {
+              if (item && typeof item === 'object' && 'annotations' in item && Array.isArray(item.annotations)) {
+                item.annotations.forEach((annotation: Record<string, unknown>) => {
+                  if (annotation.type === 'url_citation' && annotation.url && typeof annotation.url === 'string') {
+                    if (!seenUrls.has(annotation.url)) {
+                      seenUrls.add(annotation.url)
+                      sources.push({
+                        url: annotation.url,
+                        title: typeof annotation.title === 'string' ? annotation.title : new URL(annotation.url).hostname,
+                        startIndex: typeof annotation.start_index === 'number' ? annotation.start_index : undefined,
+                        endIndex: typeof annotation.end_index === 'number' ? annotation.end_index : undefined,
+                      })
+                    }
+                  }
+                })
+              }
+            })
+          }
+        }
+        
+        // Check output array for annotations
+        if (Array.isArray(data.output)) {
+          data.output.forEach((item) => {
+            if (item && item.content) {
+              extractAnnotationsFromContent(item.content)
+            }
+          })
+        }
+        
+        // Check result array for annotations
+        if (Array.isArray(data.result)) {
+          data.result.forEach((item) => {
+            if (item && typeof item === 'object' && 'content' in item) {
+              extractAnnotationsFromContent((item as Record<string, unknown>).content)
+            }
+          })
+        }
+        
+        console.log("[v0] Extracted sources:", sources.length)
+        return sources
+      }
+      
+      const sources = extractSources(resultData)
+      
       // Parse artifacts if present
       const artifacts: Artifact[] = (resultData.artifacts || []).map((a, i) => ({
         id: crypto.randomUUID(),
@@ -367,6 +427,7 @@ export default function DashboardPage() {
                 }
               ],
               artifacts: artifacts.length > 0 ? artifacts : undefined,
+              sources: sources.length > 0 ? sources : undefined,
             }
           : m
       ))
@@ -539,6 +600,38 @@ export default function DashboardPage() {
                           )}
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Sources */}
+                  {message.sources && message.sources.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-border/50">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Sources</p>
+                      <div className="flex flex-wrap gap-2">
+                        {message.sources.map((source, index) => {
+                          // Extract domain for display
+                          let domain = source.title
+                          try {
+                            const url = new URL(source.url)
+                            domain = url.hostname.replace('www.', '')
+                          } catch {
+                            // Use title as fallback
+                          }
+                          
+                          return (
+                            <a
+                              key={`${source.url}-${index}`}
+                              href={source.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-full bg-background border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+                            >
+                              <Globe className="h-3 w-3 shrink-0" />
+                              <span className="truncate max-w-[150px]">{domain}</span>
+                            </a>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
 
