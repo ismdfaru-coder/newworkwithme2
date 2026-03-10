@@ -31,6 +31,7 @@ interface Message {
   timestamp: Date
   status?: "pending" | "processing" | "completed" | "error"
   taskId?: string
+  taskUrl?: string
   steps?: TaskStep[]
   artifacts?: Artifact[]
   sources?: Source[]
@@ -66,6 +67,10 @@ interface ManusResponse {
   output?: string | object | Array<{ id?: string; status?: string; role?: string; type?: string; content?: string }>
   message?: string
   error?: string
+  metadata?: {
+    task_title?: string
+    task_url?: string
+  }
   steps?: Array<{
     type: string
     description: string
@@ -410,6 +415,9 @@ export default function DashboardPage() {
         url: a.url,
       }))
 
+      // Extract task URL from metadata
+      const taskUrl = resultData.metadata?.task_url
+
       setMessages(prev => prev.map(m => 
         m.id === assistantMessage.id 
           ? { 
@@ -417,6 +425,7 @@ export default function DashboardPage() {
               content: responseContent,
               status: "completed",
               taskId,
+              taskUrl,
               steps: [
                 ...(m.steps || []),
                 {
@@ -603,68 +612,61 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  {/* Sources */}
-                  {message.sources && message.sources.length > 0 && (
-                    <div className="mt-4 pt-3 border-t border-border/50">
-                      <p className="text-xs font-medium text-muted-foreground mb-2">Sources</p>
-                      <div className="flex flex-wrap gap-2">
-                        {message.sources.map((source, index) => {
-                          // Extract domain for display
-                          let domain = source.title
-                          try {
-                            const url = new URL(source.url)
-                            domain = url.hostname.replace('www.', '')
-                          } catch {
-                            // Use title as fallback
-                          }
-                          
-                          return (
-                            <a
-                              key={`${source.url}-${index}`}
-                              href={source.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-full bg-background border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-                            >
-                              <Globe className="h-3 w-3 shrink-0" />
-                              <span className="truncate max-w-[150px]">{domain}</span>
-                            </a>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Actions for assistant messages */}
                   {message.role === "assistant" && message.status === "completed" && (
-                    <div className="mt-3 flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                        onClick={() => handleCopy(message.content, message.id)}
-                      >
-                        {copiedId === message.id ? (
-                          <>
-                            <Check className="h-3 w-3" />
-                            Copied
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="h-3 w-3" />
-                            Copy
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                        onClick={() => handleRetry(message.id)}
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retry
-                      </Button>
+                    <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => handleCopy(message.content, message.id)}
+                        >
+                          {copiedId === message.id ? (
+                            <>
+                              <Check className="h-3 w-3" />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3 w-3" />
+                              Copy
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => handleRetry(message.id)}
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retry
+                        </Button>
+                      </div>
+                      
+                      {/* Sources button - links to Manus task page */}
+                      {message.taskUrl && (
+                        <a
+                          href={message.taskUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <div className="flex items-center -space-x-1">
+                            <div className="h-4 w-4 rounded-full bg-orange-100 flex items-center justify-center border border-background">
+                              <span className="text-[8px] font-bold text-orange-600">G</span>
+                            </div>
+                            <div className="h-4 w-4 rounded-full bg-blue-100 flex items-center justify-center border border-background">
+                              <span className="text-[8px] font-bold text-blue-600">W</span>
+                            </div>
+                            <div className="h-4 w-4 rounded-full bg-red-100 flex items-center justify-center border border-background">
+                              <Globe className="h-2.5 w-2.5 text-red-600" />
+                            </div>
+                          </div>
+                          <span className="font-medium">Sources</span>
+                        </a>
+                      )}
                     </div>
                   )}
 
