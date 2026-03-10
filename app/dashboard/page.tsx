@@ -270,26 +270,55 @@ export default function DashboardPage() {
           }
         }
         
+        // Helper to extract text from content array (Manus API format)
+        const extractTextFromContent = (content: unknown): string => {
+          if (typeof content === 'string') return content
+          if (Array.isArray(content)) {
+            // Handle array of content objects like [{type: "output_text", text: "..."}]
+            return content
+              .filter((c): c is { type?: string; text?: string } => typeof c === 'object' && c !== null)
+              .map((c) => c.text || '')
+              .filter(Boolean)
+              .join('\n')
+          }
+          if (typeof content === 'object' && content !== null) {
+            const obj = content as Record<string, unknown>
+            if (typeof obj.text === 'string') return obj.text
+            if (typeof obj.content === 'string') return obj.content
+          }
+          return ''
+        }
+
         // Check for output field
         if (data.output !== undefined && data.output !== null) {
           console.log("[v0] Found output field, type:", typeof data.output)
           if (typeof data.output === 'string') return data.output
           if (typeof data.output === 'object') {
             if (Array.isArray(data.output)) {
+              // First try assistant messages
               const assistantContent = data.output
                 .filter((item) => item.role === 'assistant' && item.content)
-                .map((item) => item.content)
+                .map((item) => extractTextFromContent(item.content))
+                .filter(Boolean)
                 .join('\n\n')
-              if (assistantContent) return assistantContent
+              if (assistantContent) {
+                console.log("[v0] Extracted assistant content:", assistantContent.substring(0, 100))
+                return assistantContent
+              }
               
+              // Then try all items with content
               const allContent = data.output
                 .filter((item) => item.content)
-                .map((item) => item.content)
+                .map((item) => extractTextFromContent(item.content))
+                .filter(Boolean)
                 .join('\n\n')
-              if (allContent) return allContent
+              if (allContent) {
+                console.log("[v0] Extracted all content:", allContent.substring(0, 100))
+                return allContent
+              }
             }
             const outputObj = data.output as Record<string, unknown>
-            if (outputObj.content && typeof outputObj.content === 'string') return outputObj.content
+            if (outputObj.content) return extractTextFromContent(outputObj.content)
             if (outputObj.text && typeof outputObj.text === 'string') return outputObj.text
             if (outputObj.data && typeof outputObj.data === 'string') return outputObj.data
           }
