@@ -22,6 +22,7 @@ import {
   Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { MarkdownContent } from "@/components/markdown-content"
 
 interface Message {
   id: string
@@ -502,12 +503,16 @@ export default function DashboardPage() {
 
                   {/* Message Content */}
                   {message.content && (
-                    <div className={cn(
-                      "prose prose-sm dark:prose-invert max-w-none",
-                      message.status === "error" && "text-destructive"
-                    )}>
-                      <p className="whitespace-pre-wrap">{message.content}</p>
-                    </div>
+                    message.role === "assistant" && message.status !== "error" ? (
+                      <MarkdownContent content={message.content} />
+                    ) : (
+                      <div className={cn(
+                        "prose prose-sm dark:prose-invert max-w-none",
+                        message.status === "error" && "text-destructive"
+                      )}>
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      </div>
+                    )
                   )}
 
                   {/* Artifacts */}
