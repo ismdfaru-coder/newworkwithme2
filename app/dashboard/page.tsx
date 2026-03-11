@@ -565,6 +565,7 @@ export default function DashboardPage() {
   // Show chat view if there are messages
   if (messages.length > 0) {
     return (
+      <>
       <div className="flex h-full flex-col">
         {/* Messages Area */}
         <div className="flex-1 overflow-auto px-4 py-6">
@@ -888,6 +889,7 @@ export default function DashboardPage() {
           onClick={() => setSourcePanelOpen(false)}
         />
       )}
+      </>
     )
   }
 
