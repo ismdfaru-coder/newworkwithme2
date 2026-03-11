@@ -438,8 +438,51 @@ export default function DashboardPage() {
         return { cleanedText, sources }
       }
       
-      const { cleanedText, sources } = parseSourcesFromText(responseContent)
+      const { cleanedText, sources: parsedSources } = parseSourcesFromText(responseContent)
       responseContent = cleanedText
+      
+      // Resolve redirect URLs (like vertexaisearch.cloud.google.com) to get actual URLs
+      let sources = parsedSources
+      if (parsedSources.length > 0) {
+        try {
+          const urlsToResolve = parsedSources.map(s => s.url)
+          const resolveResponse = await fetch('/api/resolve-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: urlsToResolve }),
+          })
+          
+          if (resolveResponse.ok) {
+            const { resolvedUrls } = await resolveResponse.json() as { 
+              resolvedUrls: Array<{ original: string; resolved: string }> 
+            }
+            
+            // Update sources with resolved URLs
+            sources = parsedSources.map(source => {
+              const resolved = resolvedUrls.find(r => r.original === source.url)
+              if (resolved && resolved.resolved !== source.url) {
+                try {
+                  const resolvedUrlObj = new URL(resolved.resolved)
+                  return {
+                    ...source,
+                    url: resolved.resolved,
+                    // Update favicon to use the resolved domain
+                    favicon: `https://www.google.com/s2/favicons?domain=${resolvedUrlObj.hostname}&sz=32`,
+                    // Keep original title but could update hostname display
+                  }
+                } catch {
+                  return source
+                }
+              }
+              return source
+            })
+            console.log("[v0] Resolved sources URLs:", sources.map(s => s.url))
+          }
+        } catch (error) {
+          console.error("[v0] Error resolving URLs:", error)
+          // Keep original sources if resolution fails
+        }
+      }
       
       // Parse artifacts if present
       const artifacts: Artifact[] = (resultData.artifacts || []).map((a, i) => ({
