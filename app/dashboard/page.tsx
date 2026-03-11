@@ -55,8 +55,8 @@ interface Artifact {
 interface Source {
   url: string
   title: string
-  startIndex?: number
-  endIndex?: number
+  description?: string
+  favicon?: string
 }
 
 interface ManusResponse {
@@ -89,6 +89,8 @@ export default function DashboardPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false)
+  const [activeSources, setActiveSources] = useState<Source[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -157,14 +159,16 @@ export default function DashboardPage() {
           : m
       ))
 
-      // Step 1: Create task
+      // Step 1: Create task with source instruction appended
+      const sourceInstruction = "\n\n[IMPORTANT: At the very end of your response, include a section titled '---SOURCES---' with a numbered list of all source URLs you referenced. Format each source as: 'NUMBER. TITLE | URL | BRIEF_DESCRIPTION'. This section will be parsed programmatically.]"
+      
       const response = await fetch("/api/manus", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ 
-          prompt: userMessage.content,
+          prompt: userMessage.content + sourceInstruction,
           taskMode: "chat"
         }),
       })
@@ -351,60 +355,91 @@ export default function DashboardPage() {
         return "No content received from API"
       }
 
-      const responseContent = extractContent(resultData)
+      let responseContent = extractContent(resultData)
       console.log("[v0] Extracted content:", responseContent.substring(0, 200))
       
-      // Extract sources/citations from annotations in the response
-      const extractSources = (data: ManusResponse): Source[] => {
+      // Parse sources from the response text (looking for ---SOURCES--- section)
+      const parseSourcesFromText = (text: string): { cleanedText: string; sources: Source[] } => {
         const sources: Source[] = []
-        const seenUrls = new Set<string>()
+        let cleanedText = text
         
-        // Helper to extract annotations from content array
-        const extractAnnotationsFromContent = (content: unknown) => {
-          if (Array.isArray(content)) {
-            content.forEach((item) => {
-              if (item && typeof item === 'object' && 'annotations' in item && Array.isArray(item.annotations)) {
-                item.annotations.forEach((annotation: Record<string, unknown>) => {
-                  if (annotation.type === 'url_citation' && annotation.url && typeof annotation.url === 'string') {
-                    if (!seenUrls.has(annotation.url)) {
-                      seenUrls.add(annotation.url)
-                      sources.push({
-                        url: annotation.url,
-                        title: typeof annotation.title === 'string' ? annotation.title : new URL(annotation.url).hostname,
-                        startIndex: typeof annotation.start_index === 'number' ? annotation.start_index : undefined,
-                        endIndex: typeof annotation.end_index === 'number' ? annotation.end_index : undefined,
-                      })
-                    }
+        // Look for the ---SOURCES--- section
+        const sourcesMatch = text.match(/---SOURCES---[\s\S]*$/i)
+        if (sourcesMatch) {
+          const sourcesSection = sourcesMatch[0]
+          cleanedText = text.replace(/---SOURCES---[\s\S]*$/i, '').trim()
+          
+          // Parse each source line (format: "NUMBER. TITLE | URL | DESCRIPTION")
+          const sourceLines = sourcesSection.split('\n').filter(line => line.trim())
+          sourceLines.forEach(line => {
+            // Match pattern: 1. Title | https://url.com | Description
+            const match = line.match(/^\d+\.\s*(.+?)\s*\|\s*(https?:\/\/[^\s|]+)\s*(?:\|\s*(.+))?$/i)
+            if (match) {
+              const [, title, url, description] = match
+              try {
+                const urlObj = new URL(url.trim())
+                sources.push({
+                  url: url.trim(),
+                  title: title?.trim() || urlObj.hostname,
+                  description: description?.trim(),
+                  favicon: `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=32`,
+                })
+              } catch {
+                // Invalid URL, skip
+              }
+            } else {
+              // Try to extract just URLs from the line
+              const urlMatch = line.match(/(https?:\/\/[^\s]+)/g)
+              if (urlMatch) {
+                urlMatch.forEach(url => {
+                  try {
+                    const urlObj = new URL(url.trim())
+                    // Extract title from text before URL
+                    const titleMatch = line.match(/^\d+\.\s*(.+?)(?:https?:\/\/)/i)
+                    sources.push({
+                      url: url.trim(),
+                      title: titleMatch?.[1]?.trim() || urlObj.hostname,
+                      favicon: `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=32`,
+                    })
+                  } catch {
+                    // Invalid URL, skip
                   }
                 })
               }
-            })
-          }
-        }
-        
-        // Check output array for annotations
-        if (Array.isArray(data.output)) {
-          data.output.forEach((item) => {
-            if (item && item.content) {
-              extractAnnotationsFromContent(item.content)
             }
           })
         }
         
-        // Check result array for annotations
-        if (Array.isArray(data.result)) {
-          data.result.forEach((item) => {
-            if (item && typeof item === 'object' && 'content' in item) {
-              extractAnnotationsFromContent((item as Record<string, unknown>).content)
+        // Also extract any inline URLs and create sources from them if no ---SOURCES--- section
+        if (sources.length === 0) {
+          const urlRegex = /https?:\/\/[^\s\)>\]]+/g
+          const urls = text.match(urlRegex) || []
+          const seenUrls = new Set<string>()
+          
+          urls.forEach(url => {
+            try {
+              const cleanUrl = url.replace(/[.,;:!?]+$/, '') // Remove trailing punctuation
+              if (!seenUrls.has(cleanUrl)) {
+                seenUrls.add(cleanUrl)
+                const urlObj = new URL(cleanUrl)
+                sources.push({
+                  url: cleanUrl,
+                  title: urlObj.hostname.replace('www.', ''),
+                  favicon: `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=32`,
+                })
+              }
+            } catch {
+              // Invalid URL, skip
             }
           })
         }
         
-        console.log("[v0] Extracted sources:", sources.length)
-        return sources
+        console.log("[v0] Parsed sources from text:", sources.length)
+        return { cleanedText, sources }
       }
       
-      const sources = extractSources(resultData)
+      const { cleanedText, sources } = parseSourcesFromText(responseContent)
+      responseContent = cleanedText
       
       // Parse artifacts if present
       const artifacts: Artifact[] = (resultData.artifacts || []).map((a, i) => ({
@@ -645,27 +680,43 @@ export default function DashboardPage() {
                         </Button>
                       </div>
                       
-                      {/* Sources button - links to Manus task page */}
-                      {message.taskUrl && (
-                        <a
-                          href={message.taskUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      {/* Sources button - opens sources panel */}
+                      {message.sources && message.sources.length > 0 && (
+                        <button
+                          onClick={() => {
+                            setActiveSources(message.sources || [])
+                            setSourcePanelOpen(true)
+                          }}
+                          className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                         >
-                          <div className="flex items-center -space-x-1">
-                            <div className="h-4 w-4 rounded-full bg-orange-100 flex items-center justify-center border border-background">
-                              <span className="text-[8px] font-bold text-orange-600">G</span>
-                            </div>
-                            <div className="h-4 w-4 rounded-full bg-blue-100 flex items-center justify-center border border-background">
-                              <span className="text-[8px] font-bold text-blue-600">W</span>
-                            </div>
-                            <div className="h-4 w-4 rounded-full bg-red-100 flex items-center justify-center border border-background">
-                              <Globe className="h-2.5 w-2.5 text-red-600" />
-                            </div>
+                          <div className="flex items-center -space-x-1.5">
+                            {message.sources.slice(0, 4).map((source, idx) => (
+                              <div 
+                                key={idx}
+                                className="h-5 w-5 rounded-full bg-background border border-border flex items-center justify-center overflow-hidden"
+                              >
+                                <img 
+                                  src={source.favicon} 
+                                  alt="" 
+                                  className="h-3 w-3"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).style.display = 'none'
+                                    const parent = (e.target as HTMLImageElement).parentElement
+                                    if (parent) {
+                                      parent.innerHTML = `<span class="text-[8px] font-bold text-muted-foreground">${source.title.charAt(0).toUpperCase()}</span>`
+                                    }
+                                  }}
+                                />
+                              </div>
+                            ))}
+                            {message.sources.length > 4 && (
+                              <div className="h-5 w-5 rounded-full bg-muted border border-border flex items-center justify-center">
+                                <span className="text-[8px] font-medium text-muted-foreground">+{message.sources.length - 4}</span>
+                              </div>
+                            )}
                           </div>
                           <span className="font-medium">Sources</span>
-                        </a>
+                        </button>
                       )}
                     </div>
                   )}
@@ -749,6 +800,94 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Sources Slide-out Panel */}
+      <div 
+        className={cn(
+          "fixed top-0 right-0 h-full w-96 bg-background border-l border-border shadow-xl transform transition-transform duration-300 ease-in-out z-50",
+          sourcePanelOpen ? "translate-x-0" : "translate-x-full"
+        )}
+      >
+        <div className="flex flex-col h-full">
+          {/* Panel Header */}
+          <div className="flex items-center justify-between p-4 border-b border-border">
+            <h2 className="text-lg font-semibold">Sources</h2>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-8 w-8"
+              onClick={() => setSourcePanelOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Sources List */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {activeSources.map((source, index) => (
+              <a
+                key={`${source.url}-${index}`}
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block p-3 rounded-lg border border-border hover:border-foreground/20 hover:bg-muted/50 transition-colors group"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                    <img 
+                      src={source.favicon} 
+                      alt="" 
+                      className="h-5 w-5"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none'
+                        const parent = (e.target as HTMLImageElement).parentElement
+                        if (parent) {
+                          parent.innerHTML = `<span class="text-sm font-bold text-muted-foreground">${source.title.charAt(0).toUpperCase()}</span>`
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+                      <span className="truncate">{(() => {
+                        try {
+                          return new URL(source.url).hostname.replace('www.', '')
+                        } catch {
+                          return source.title
+                        }
+                      })()}</span>
+                    </div>
+                    <h3 className="font-medium text-sm leading-snug group-hover:text-primary transition-colors line-clamp-2">
+                      {source.title}
+                    </h3>
+                    {source.description && (
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                        {source.description}
+                      </p>
+                    )}
+                  </div>
+                  <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                </div>
+              </a>
+            ))}
+            
+            {activeSources.length === 0 && (
+              <div className="text-center text-muted-foreground py-8">
+                <Globe className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No sources available</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Overlay when panel is open */}
+      {sourcePanelOpen && (
+        <div 
+          className="fixed inset-0 bg-black/20 z-40"
+          onClick={() => setSourcePanelOpen(false)}
+        />
+      )}
     )
   }
 
