@@ -363,12 +363,28 @@ export default function DashboardPage() {
         const sources: Source[] = []
         let cleanedText = text
         
-        // Look for the ---SOURCES--- section
-        const sourcesMatch = text.match(/---SOURCES---[\s\S]*$/i)
-        if (sourcesMatch) {
-          const sourcesSection = sourcesMatch[0]
-          cleanedText = text.replace(/---SOURCES---[\s\S]*$/i, '').trim()
-          
+        // Look for various sources section patterns and strip them
+        const sourcePatterns = [
+          /---SOURCES---[\s\S]*$/i,
+          /\n\s*#{1,3}\s*sources?\s*:?\s*\n[\s\S]*$/i,
+          /\n\s*\*{0,2}sources?\*{0,2}\s*:?\s*\n[\s\S]*$/i,
+          /\n\s*references?\s*:?\s*\n[\s\S]*$/i,
+          /\n\s*source\s+urls?\s*:?\s*\n[\s\S]*$/i,
+          /\n\s*cited\s+sources?\s*:?\s*\n[\s\S]*$/i,
+        ]
+        
+        let sourcesSection = ''
+        for (const pattern of sourcePatterns) {
+          const match = text.match(pattern)
+          if (match) {
+            sourcesSection = match[0]
+            cleanedText = text.replace(pattern, '').trim()
+            break
+          }
+        }
+        
+        // If we found a sources section, parse it
+        if (sourcesSection) {
           // Parse each source line (format: "NUMBER. TITLE | URL | DESCRIPTION")
           const sourceLines = sourcesSection.split('\n').filter(line => line.trim())
           sourceLines.forEach(line => {
